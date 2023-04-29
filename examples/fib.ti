@@ -1,0 +1,6 @@
+fn fib(x) => if x > 2
+               { fib(x - 1) + fib(x - 2) }
+             else
+               { 1 }
+
+println(fib(10))
