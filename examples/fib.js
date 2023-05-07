@@ -1,11 +1,12 @@
-const println = console.log;
+const ti_println = console.log;
 (() => {
-  function fib(x) {
-    return (() => { if (x > 2) { return (() => {
-      return fib(x - 1) + fib(x - 2);
-    })(); } else { return (() => {
-      return 1;
-    })(); }})();
-  };
-  return println(fib(10));
-})()
+  function __ti_Map() {
+  }
+  function ti_Map() {
+    return new __ti_Map();
+  }
+  let ti_m = ti_Map();
+  ti_m["xy"] = 123;
+  ti_m["yx"] = 321;
+  ti_println(ti_m);
+  })()

@@ -71,10 +71,10 @@ impl<'a> TiParser<'a> {
 
     fn parse_stmt(&mut self, ti_reporter: &mut TiReporter<'a>) -> Option<TiStmt> {
         match self.ti_tokens.peek().ti_token_type {
-            Semi => {
-                self.ti_tokens.forward();
-                None
-            }
+            Semi => Some(TiStmt::new(
+                self.ti_tokens.next().ti_where,
+                TiStmtType::Empty,
+            )),
             KLet => self.parse_stmt_let(ti_reporter),
             KBreak => Some(TiStmt::new(
                 self.ti_tokens.next().ti_where,
@@ -103,11 +103,126 @@ impl<'a> TiParser<'a> {
                 };
                 Some(TiStmt::new(cw, TiStmtType::Return(expr)))
             }
+            KType => self.parse_stmt_type(ti_reporter),
+            KImpl => self.parse_stmt_impl(ti_reporter),
             _ => {
                 let expr = self.parse_expr(ti_reporter);
                 expr.and_then(|expr| Some(TiStmt::new(expr.ti_where, TiStmtType::Expr(expr))))
             }
         }
+    }
+
+    fn parse_stmt_impl(&mut self, ti_reporter: &mut TiReporter<'a>) -> Option<TiStmt> {
+        self.ti_tokens.mark();
+        self.ti_tokens.forward();
+        let impln = self.ti_tokens.assert_next_ident();
+        let result = impln.and_then(|vimpln| {
+            if self.ti_tokens.assert_next(KFor) {
+                todo!()
+            } else {
+                if !self.ti_tokens.assert_next(LBra) {
+                    ti_reporter.report(TiError::new(
+                        TiErrorType::SyntaxError {
+                            syntax_error: TiSyntaxError::ParserError(format!("")),
+                        },
+                        self.ti_tokens.here(),
+                        self.ti_source,
+                    ));
+                    return None;
+                }
+                let mut impls = Vec::new();
+                while !self.ti_tokens.is_eof() && !self.ti_tokens.assert_next(RBra) {
+                    if self.ti_tokens.assert_next(KFn) {
+                        if let Some(func) = self._parse_fn(ti_reporter) {
+                            impls.push(func);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                Some(TiStmt::new(
+                    self.ti_tokens.range(),
+                    TiStmtType::Impl(vimpln, impls),
+                ))
+            }
+        });
+        self.ti_tokens.unmark();
+        result
+    }
+
+    fn parse_stmt_type(&mut self, ti_reporter: &mut TiReporter<'a>) -> Option<TiStmt> {
+        self.ti_tokens.mark();
+        self.ti_tokens.forward();
+        let tn = self.ti_tokens.assert_next_ident();
+        let result = tn.and_then(|vtn| {
+            if self.ti_tokens.assert_next(LBrace) {
+                let mut fields = Vec::new();
+                if !self.ti_tokens.assert_next(RBrace) {
+                    loop {
+                        if self.ti_tokens.is_eof() {
+                            ti_reporter.report(TiError::new(
+                                TiErrorType::SyntaxError {
+                                    syntax_error: TiSyntaxError::ParserError(format!(
+                                        "mismatched closing tag, expected RBrace, found flag eof, while parsing a function",
+                                    )),
+                                },
+                                self.ti_tokens.last(),
+                                self.ti_source,
+                            ));
+                            return None;
+                        }
+                        if let Some(aname) = self.ti_tokens.assert_next_ident() {
+                            let ad = if self.ti_tokens.assert_next(Colon) {
+                                todo!()
+                            } else {
+                                Rc::new(String::new())
+                            };
+                            fields.push((aname, ad));
+                        } else {
+                            ti_reporter.report(TiError::new(
+                                TiErrorType::SyntaxError {
+                                    syntax_error: TiSyntaxError::ParserError(format!(
+                                        "expected Ident, found {:?}, while parsing a function",
+                                        self.ti_tokens.peek().ti_token_type,
+                                    )),
+                                },
+                                self.ti_tokens.here(),
+                                self.ti_source,
+                            ));
+                            return None
+                        }
+                        if self.ti_tokens.assert_next(RBrace) {
+                            break
+                        }
+                        if !self.ti_tokens.assert_next(Comma) {
+                                ti_reporter.report(TiError::new(
+                                TiErrorType::SyntaxError {
+                                    syntax_error: TiSyntaxError::ParserError(format!(
+                                        "expected Comma, found {:?}, while parsing a function",
+                                        self.ti_tokens.peek().ti_token_type,
+                                    )),
+                                },
+                                self.ti_tokens.here(),
+                                self.ti_source,
+                            ));
+                        }
+                    }
+                }
+                Some(TiStmt::new(self.ti_tokens.range(), TiStmtType::TypeDecl(vtn, fields)))
+            } else {
+                ti_reporter.report(TiError::new(
+                    TiErrorType::SyntaxError {
+                        syntax_error: TiSyntaxError::ParserError(format!("expected LBrace, found {:?}, while parsing a mixed type", self.ti_tokens.peek().ti_token_type)),
+                    },
+                    self.ti_tokens.here(),
+                    self.ti_source,
+                ));
+                None
+            }
+
+        });
+        self.ti_tokens.unmark();
+        result
     }
 
     fn parse_stmt_let(&mut self, ti_reporter: &mut TiReporter<'a>) -> Option<TiStmt> {
@@ -239,7 +354,7 @@ impl<'a> TiParser<'a> {
         let mut result = self.parse_expr_add(ti_reporter);
         loop {
             if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(OGeq) {
-                let rexpr = self.parse_expr_compare(ti_reporter);
+                let rexpr = self.parse_expr_add(ti_reporter);
                 result = rexpr.and_then(|vrexpr| {
                     result.and_then(|vexpr| {
                         Some(TiExpr::new(
@@ -249,7 +364,7 @@ impl<'a> TiParser<'a> {
                     })
                 });
             } else if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(OGrt) {
-                let rexpr = self.parse_expr_compare(ti_reporter);
+                let rexpr = self.parse_expr_add(ti_reporter);
                 result = rexpr.and_then(|vrexpr| {
                     result.and_then(|vexpr| {
                         Some(TiExpr::new(
@@ -259,7 +374,7 @@ impl<'a> TiParser<'a> {
                     })
                 });
             } else if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(OLeq) {
-                let rexpr = self.parse_expr_compare(ti_reporter);
+                let rexpr = self.parse_expr_add(ti_reporter);
                 result = rexpr.and_then(|vrexpr| {
                     result.and_then(|vexpr| {
                         Some(TiExpr::new(
@@ -291,7 +406,7 @@ impl<'a> TiParser<'a> {
         let mut result = self.parse_expr_mul(ti_reporter);
         loop {
             if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(OSub) {
-                let rexpr = self.parse_expr_compare(ti_reporter);
+                let rexpr = self.parse_expr_mul(ti_reporter);
                 result = rexpr.and_then(|vrexpr| {
                     result.and_then(|vexpr| {
                         Some(TiExpr::new(
@@ -323,7 +438,7 @@ impl<'a> TiParser<'a> {
         let mut result = self.parse_expr_unary(ti_reporter);
         loop {
             if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(ODiv) {
-                let rexpr = self.parse_expr_compare(ti_reporter);
+                let rexpr = self.parse_expr_unary(ti_reporter);
                 result = rexpr.and_then(|vrexpr| {
                     result.and_then(|vexpr| {
                         Some(TiExpr::new(
@@ -351,12 +466,142 @@ impl<'a> TiParser<'a> {
     }
 
     fn parse_expr_unary(&mut self, ti_reporter: &mut TiReporter<'a>) -> Option<TiExpr> {
-        self.parse_expr_call(ti_reporter)
+        self.ti_tokens.mark();
+        let mut result = self.parse_expr_call(ti_reporter);
+        loop {
+            if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(OMember) {
+                let rexpr = self.parse_expr_call(ti_reporter);
+                result = rexpr.and_then(|vrexpr| {
+                    result.and_then(|vexpr| {
+                        Some(TiExpr::new(
+                            self.ti_tokens.range(),
+                            E::Member(Box::new(vexpr), Box::new(vrexpr)),
+                        ))
+                    })
+                });
+            } else if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(OField) {
+                let rexpr = self.parse_expr_call(ti_reporter);
+                result = rexpr.and_then(|vrexpr| {
+                    result.and_then(|vexpr| {
+                        Some(TiExpr::new(
+                            self.ti_tokens.range(),
+                            E::Field(Box::new(vexpr), Box::new(vrexpr)),
+                        ))
+                    })
+                });
+            } else if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(LBracket) {
+                let rexpr = self.parse_expr(ti_reporter);
+                result = rexpr.and_then(|vrexpr| {
+                    result.and_then(|vexpr| {
+                        Some(TiExpr::new(
+                            self.ti_tokens.range(),
+                            E::Lookup(Box::new(vexpr), Box::new(vrexpr)),
+                        ))
+                    })
+                });
+                if self.ti_tokens.is_eof() {
+                    ti_reporter.report(TiError::new(
+                        TiErrorType::SyntaxError { 
+                            syntax_error: TiSyntaxError::ParserError(
+                                format!("mismatched closing tag, expected RBracket, found flag eof, while parsing an expression")
+                            )
+                        },
+                        self.ti_tokens.here(),
+                        self.ti_source,
+                    ));
+                }
+                if !self.ti_tokens.assert_next(RBracket) {
+                    ti_reporter.report(TiError::new(
+                        TiErrorType::SyntaxError { 
+                            syntax_error: TiSyntaxError::ParserError(
+                                format!("mismatched close tag, expected token RBracket, found {:?}, while parsing an expression",
+                                    self.ti_tokens.peek().ti_token_type
+                                )
+                            )
+                        },
+                        self.ti_tokens.here(),
+                        self.ti_source,
+                    ));
+                    return None;
+                }
+            } else {
+                break;
+            }
+        }
+        self.ti_tokens.unmark();
+        result
+    }
+
+    fn parse_expr_member(&mut self, ti_reporter: &mut TiReporter<'a>) -> Option<TiExpr> {
+        self.ti_tokens.mark();
+        let mut result = self.parse_expr_binary(ti_reporter);
+        loop {
+            if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(OMember) {
+                let rexpr = self.parse_expr_binary(ti_reporter);
+                result = rexpr.and_then(|vrexpr| {
+                    result.and_then(|vexpr| {
+                        Some(TiExpr::new(
+                            self.ti_tokens.range(),
+                            E::Member(Box::new(vexpr), Box::new(vrexpr)),
+                        ))
+                    })
+                });
+            } else if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(OField) {
+                let rexpr = self.parse_expr_binary(ti_reporter);
+                result = rexpr.and_then(|vrexpr| {
+                    result.and_then(|vexpr| {
+                        Some(TiExpr::new(
+                            self.ti_tokens.range(),
+                            E::Field(Box::new(vexpr), Box::new(vrexpr)),
+                        ))
+                    })
+                });
+            } else if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(LBracket) {
+                let rexpr = self.parse_expr(ti_reporter);
+                result = rexpr.and_then(|vrexpr| {
+                    result.and_then(|vexpr| {
+                        Some(TiExpr::new(
+                            self.ti_tokens.range(),
+                            E::Lookup(Box::new(vexpr), Box::new(vrexpr)),
+                        ))
+                    })
+                });
+                if self.ti_tokens.is_eof() {
+                    ti_reporter.report(TiError::new(
+                        TiErrorType::SyntaxError { 
+                            syntax_error: TiSyntaxError::ParserError(
+                                format!("mismatched closing tag, expected RBracket, found flag eof, while parsing an expression")
+                            )
+                        },
+                        self.ti_tokens.here(),
+                        self.ti_source,
+                    ));
+                }
+                if !self.ti_tokens.assert_next(RBracket) {
+                    ti_reporter.report(TiError::new(
+                        TiErrorType::SyntaxError { 
+                            syntax_error: TiSyntaxError::ParserError(
+                                format!("mismatched close tag, expected token RBracket, found {:?}, while parsing an expression",
+                                    self.ti_tokens.peek().ti_token_type
+                                )
+                            )
+                        },
+                        self.ti_tokens.here(),
+                        self.ti_source,
+                    ));
+                    return None;
+                }
+            } else {
+                break;
+            }
+        }
+        self.ti_tokens.unmark();
+        result
     }
 
     fn parse_expr_call(&mut self, ti_reporter: &mut TiReporter<'a>) -> Option<TiExpr> {
         self.ti_tokens.mark();
-        let mut result = self.parse_expr_binary(ti_reporter);
+        let mut result = self.parse_expr_member(ti_reporter);
         loop {
             if !self.ti_tokens.is_eof() && self.ti_tokens.assert_next(LBrace) {
                 let mut fargs = Vec::new();
@@ -408,6 +653,15 @@ impl<'a> TiParser<'a> {
             LlNum(num) => {
                 let num = *num;
                 Some(TiExpr::new(self.ti_tokens.last(), E::LlNum(num)))
+            }
+            LlStr(t_str) => {
+                let t_str = t_str.clone();
+                Some(TiExpr::new(self.ti_tokens.last(), E::LlStr(t_str)))
+            }
+            LlNil => Some(TiExpr::new(self.ti_tokens.last(), E::LlNil)),
+            LlBool(t_bool) => {
+                let t_bool = t_bool.clone();
+                Some(TiExpr::new(self.ti_tokens.last(), E::LlBool(t_bool)))
             }
             LBrace => {
                 let expr = self.parse_expr(ti_reporter);
@@ -480,8 +734,33 @@ impl<'a> TiParser<'a> {
                 result
             }
             KFn => {
-                self.ti_tokens.mark_last();
-                let result = self.ti_tokens.assert_next_ident().and_then(|fname| {
+                let func = self._parse_fn(ti_reporter);
+                func.and_then(|vf| {
+                    Some(TiExpr::new(
+                        self.ti_tokens.range(),
+                        E::Fn(vf.0, vf.1, vf.2, vf.3),
+                    ))
+                })
+            }
+            _ => {
+                ti_reporter.report(TiError::new(
+                    TiErrorType::SyntaxError {
+                        syntax_error: TiSyntaxError::ParserError(format!(
+                            "unexpected token {:?} while parsing an expression",
+                            curr
+                        )),
+                    },
+                    self.ti_tokens.last(),
+                    self.ti_source,
+                ));
+                None
+            }
+        }
+    }
+
+    fn _parse_fn(&mut self, ti_reporter: &mut TiReporter<'a>) -> Option<ImplFnType> {
+        self.ti_tokens.mark_last();
+        let result = self.ti_tokens.assert_next_ident().and_then(|fname| {
                     if !self.ti_tokens.assert_next(LBrace) {
                         ti_reporter.report(TiError::new(
                             TiErrorType::SyntaxError {
@@ -563,27 +842,9 @@ impl<'a> TiParser<'a> {
                             return None;
                         }
                     };
-                    Some(TiExpr::new(
-                        self.ti_tokens.range(),
-                        E::Fn(fname, fargs, fretd, fbody),
-                    ))
+                    Some((fname, fargs, fretd, fbody))
                 });
-                self.ti_tokens.unmark();
-                result
-            }
-            _ => {
-                ti_reporter.report(TiError::new(
-                    TiErrorType::SyntaxError {
-                        syntax_error: TiSyntaxError::ParserError(format!(
-                            "unexpected token {:?} while parsing an expression",
-                            curr
-                        )),
-                    },
-                    self.ti_tokens.last(),
-                    self.ti_source,
-                ));
-                None
-            }
-        }
+        self.ti_tokens.unmark();
+        result
     }
 }

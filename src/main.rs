@@ -18,7 +18,7 @@ fn main() {
     "; */
     let mut reporter = TiReporter::new();
 
-    print!("{}", "\x1b[scompile ...\n".bright_white());
+    println!("{}", "\x1b[scompile ...".bright_white());
 
     let lexer = TiLexer::new(source);
     let tokens = lexer.tokenize(&mut reporter);
@@ -52,6 +52,6 @@ fn main() {
         ) */
 
         let mut output = fs::File::create(&args[2]).unwrap();
-        write!(output, "const println = console.log;\r\n{}", code);
+        write!(output, "const ti_println = console.log;\r\n{}", code).unwrap();
     }
 }

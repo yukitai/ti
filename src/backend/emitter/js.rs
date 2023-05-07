@@ -1,4 +1,8 @@
-use crate::frontend::parser::ast::{TiExpr, TiExprType as E, TiProg, TiStmt, TiStmtType};
+use std::rc::Rc;
+
+use crate::frontend::parser::ast::{
+    ImplFnType, TiExpr, TiExprType as E, TiProg, TiStmt, TiStmtType,
+};
 
 use super::{emitter::TiEmit, stream::Stream};
 
@@ -68,60 +72,132 @@ impl JSEmitter {
             E::Div(lhs, rhs) => expr_proc!(self, proc, 0x16, stream, lhs "/" rhs),
 
             E::Var(n) => {
+                stream.write("ti_");
                 stream.write(n);
             }
             E::LlNum(x) => {
                 stream.write(&x.to_string());
             }
+            E::LlStr(s) => {
+                stream.write(&format!("{:?}", s));
+            }
+            E::LlBool(b) => {
+                if *b {
+                    stream.write("true");
+                } else {
+                    stream.write("false");
+                }
+            }
+            E::LlNil => stream.write("null"),
 
             E::Block(block) => {
                 self.emit_block(block, stream);
             }
 
-            E::IfElse(cond, tcase, fcase) => {
-                stream.write("(() => { if (");
-                self.emit_expr(cond, stream);
-                stream.write(") { return ");
-                self.emit_block(tcase, stream);
-                if let Some(vfcase) = fcase {
-                    stream.write("; } else { return ");
+            E::IfElse(cond, tcase, fcase) => match fcase {
+                Some(vfcase) => {
+                    stream.write("(");
+                    self.emit_expr(cond, stream);
+                    stream.write(" ? ");
+                    self.emit_block(tcase, stream);
+                    stream.write(" : ");
                     self.emit_block(vfcase, stream);
+                    stream.write(")");
                 }
-                stream.write("; }})()");
-            }
+                None => {
+                    stream.write("if (");
+                    self.emit_expr(cond, stream);
+                    stream.write(") {\r\n");
+                    self.begin();
+                    self.emit_block_internal(tcase, stream, false);
+                    self.close();
+                    self.emit_ident(stream);
+                    stream.write("}");
+                }
+            },
 
-            E::Fn(fname, fargs, _, fbody) => {
-                stream.write("function ");
+            E::Fn(fname, fargs, _fret_d, fbody) => {
+                stream.write("function ti_");
                 stream.write(fname);
                 stream.write("(");
                 if fargs.len() > 0 {
+                    stream.write("ti_");
                     stream.write(&fargs[0].0);
                     for (an, _) in &fargs[1..] {
-                        stream.write(", ");
+                        stream.write(", ti_");
                         stream.write(an);
                     }
                 }
                 stream.write(") {\r\n");
-                self.emit_block_internal(fbody, stream);
+                self.emit_block_internal(fbody, stream, true);
                 self.emit_ident(stream);
                 stream.write("}");
+            }
+
+            E::Member(obj, field) => {
+                self.emit_expr(obj, stream);
+                stream.write(".");
+                self.emit_expr(field, stream);
+            }
+            E::Lookup(obj, field) => {
+                self.emit_expr(obj, stream);
+                stream.write("[");
+                self.emit_expr(field, stream);
+                stream.write("]");
+            }
+            E::Field(cls, field) => {
+                stream.write("__");
+                self.emit_expr(cls, stream);
+                stream.write(".prototype.");
+                self.emit_expr(field, stream);
             }
 
             E::Call(callable, fargs) => {
                 self.emit_expr(callable, stream);
                 stream.write("(");
-                if fargs.len() > 0 {
-                    self.emit_expr(&fargs[0], stream);
-                    for arg in &fargs[1..] {
-                        stream.write(", ");
-                        self.emit_expr(arg, stream);
+                match &callable.ti_expr {
+                    E::Member(lhs, _) => {
+                        self.emit_expr(lhs, stream);
+                        for arg in fargs {
+                            stream.write(", ");
+                            self.emit_expr(arg, stream);
+                        }
+                    }
+                    _ => {
+                        if fargs.len() > 0 {
+                            self.emit_expr(&fargs[0], stream);
+                            for arg in &fargs[1..] {
+                                stream.write(", ");
+                                self.emit_expr(arg, stream);
+                            }
+                        }
                     }
                 }
+
                 stream.write(")");
             }
 
             _ => {}
         }
+    }
+
+    fn emit_fn(&mut self, func: &ImplFnType, stream: &mut Stream) {
+        let (fname, fargs, _fret_d, fbody) = func;
+        stream.write("function ti_");
+        stream.write(fname);
+        stream.write("(");
+        if fargs.len() > 0 {
+            stream.write("ti_");
+            stream.write(&fargs[0].0);
+            for (an, _) in &fargs[1..] {
+                stream.write(", ti_");
+                stream.write(an);
+            }
+        }
+        stream.write(") {\r\n");
+        self.emit_block_internal(fbody, stream, true);
+        self.emit_ident(stream);
+        stream.write("}");
     }
 
     fn emit_expr(&mut self, expr: &TiExpr, stream: &mut Stream) {
@@ -131,8 +207,9 @@ impl JSEmitter {
     fn emit_stmt(&mut self, stmt: &TiStmt, stream: &mut Stream, ret: bool) {
         self.emit_ident(stream);
         match &stmt.ti_stmt {
+            TiStmtType::Empty => {}
             TiStmtType::Let(pattern, value) => {
-                stream.write("let ");
+                stream.write("let ti_");
                 stream.write(pattern);
                 if let Some(vvalue) = value {
                     stream.write(" = ");
@@ -157,24 +234,95 @@ impl JSEmitter {
                 }
                 stream.write(";\r\n");
             }
+            TiStmtType::TypeDecl(name, fields) => {
+                stream.write("function __ti_");
+                stream.write(name);
+                stream.write("(");
+                if fields.len() > 0 {
+                    stream.write("ti_");
+                    stream.write(&fields[0].0);
+                    for (field, _) in fields[1..].iter() {
+                        stream.write(", ti_");
+                        stream.write(field);
+                    }
+                }
+                stream.write(") {\r\n");
+                self.begin();
+                for (field, _) in fields {
+                    self.emit_ident(stream);
+                    stream.write("this.ti_");
+                    stream.write(field);
+                    stream.write(" = ti_");
+                    stream.write(field);
+                    stream.write(";\r\n");
+                }
+                self.close();
+                self.emit_ident(stream);
+                stream.write("}\r\n");
+                self.emit_ident(stream);
+                stream.write("function ti_");
+                stream.write(name);
+                stream.write("(");
+                if fields.len() > 0 {
+                    stream.write("ti_");
+                    stream.write(&fields[0].0);
+                    for (field, _) in fields[1..].iter() {
+                        stream.write(", ti_");
+                        stream.write(field);
+                    }
+                }
+                stream.write(") {\r\n");
+                self.begin();
+                self.emit_ident(stream);
+                stream.write("return new __ti_");
+                stream.write(name);
+                stream.write("(");
+                if fields.len() > 0 {
+                    stream.write("ti_");
+                    stream.write(&fields[0].0);
+                    for (field, _) in fields[1..].iter() {
+                        stream.write(", ti_");
+                        stream.write(field);
+                    }
+                }
+                stream.write(");\r\n");
+                self.close();
+                self.emit_ident(stream);
+                stream.write("}\r\n");
+            }
+            TiStmtType::Impl(name, funcs) => {
+                for func in funcs {
+                    self.emit_single_impl(name, func, stream);
+                }
+            }
         }
     }
 
-    fn emit_block_internal(&mut self, block: &Vec<TiStmt>, stream: &mut Stream) {
+    fn emit_single_impl(&mut self, name: &Rc<String>, func: &ImplFnType, stream: &mut Stream) {
+        stream.write("__ti_");
+        stream.write(name);
+        stream.write(".prototype.ti_");
+        stream.write(&func.0);
+        stream.write(" = ");
+        self.emit_fn(func, stream);
+        stream.write(";\r\n");
+    }
+
+    fn emit_block_internal(&mut self, block: &Vec<TiStmt>, stream: &mut Stream, ret: bool) {
         let last = block.last();
         if let Some(vlast) = last {
             self.begin();
             for stmt in block[0..(block.len() - 1)].iter() {
                 self.emit_stmt(stmt, stream, false);
             }
-            self.emit_stmt(vlast, stream, true);
+            self.emit_stmt(vlast, stream, ret);
             self.close();
         }
     }
 
     fn emit_block(&mut self, block: &Vec<TiStmt>, stream: &mut Stream) {
         stream.write("(() => {\r\n");
-        self.emit_block_internal(block, stream);
+        self.emit_block_internal(block, stream, true);
         self.emit_ident(stream);
         stream.write("})()");
     }

@@ -1,6 +1,11 @@
-fn fib(x) => if x > 2
-               { fib(x - 1) + fib(x - 2) }
-             else
-               { 1 }
 
-println(fib(10))
+
+type Map()
+
+let m = Map()
+
+m["xy"] = 123
+
+m["yx"] = 321
+
+println(m);

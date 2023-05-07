@@ -33,6 +33,7 @@ pub enum TiTokenType {
     KBreak,
     KContinue,
     KReturn,
+    KImpl,
 
     OAdd,    // +
     OSub,    // -
@@ -53,6 +54,7 @@ pub enum TiTokenType {
     OLeq,    // <=
     OLes,    // <
     OMember, // .
+    OField,  // ::
 
     Eof,
 }

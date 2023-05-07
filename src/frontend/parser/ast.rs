@@ -33,13 +33,30 @@ impl TiStmt {
     }
 }
 
+pub type ImplFnType = (
+    Rc<String>,
+    Vec<(Rc<String>, TiDescri)>,
+    TiDescri,
+    Vec<TiStmt>,
+);
+
 #[derive(Debug)]
 pub enum TiStmtType {
+    Empty,
     Let(Rc<String>, Option<TiExpr>),
     Break,
     Continue,
     Return(Option<TiExpr>),
     Expr(TiExpr),
+    TypeDecl(Rc<String>, Vec<(Rc<String>, TiDescri)>),
+    Impl(Rc<String>, Vec<ImplFnType>),
+    /*
+    ImplFor(
+        Rc<String>,
+        Rc<String>,
+        Vec<ImplFnType>,
+    ),
+    */
 }
 
 #[derive(Debug)]
@@ -61,10 +78,14 @@ pub enum TiExprType {
     Var(Rc<String>),
     LlNum(f64),
     LlStr(Rc<String>),
+    LlBool(bool),
+    LlNil,
     LlList(Vec<TiExpr>),
     LlMap(Vec<(TiExpr, TiExpr)>),
 
     Member(Box<TiExpr>, Box<TiExpr>),
+    Lookup(Box<TiExpr>, Box<TiExpr>),
+    Field(Box<TiExpr>, Box<TiExpr>),
     Neg(Box<TiExpr>),
     Not(Box<TiExpr>),
 

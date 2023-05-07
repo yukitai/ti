@@ -60,19 +60,31 @@ impl<'a> TiLexer<'a> {
         curr
     }
 
+    fn last(&self) -> u8 {
+        self.ti_bytes[self.curr - 1]
+    }
+
     pub fn tokenize(mut self, ti_reporter: &mut TiReporter<'a>) -> TiTokenStream {
         let mut tokens = Vec::new();
         while !self.is_eof() {
             let curr = self.next();
             match curr {
-                b' ' => {}
+                b' ' | b'\t' => {}
                 b'(' => tokens.push(TiToken::new(LBrace, self.here())),
                 b')' => tokens.push(TiToken::new(RBrace, self.here())),
                 b'[' => tokens.push(TiToken::new(LBracket, self.here())),
                 b']' => tokens.push(TiToken::new(RBracket, self.here())),
                 b'{' => tokens.push(TiToken::new(LBra, self.here())),
                 b'}' => tokens.push(TiToken::new(RBra, self.here())),
-                b':' => tokens.push(TiToken::new(Colon, self.here())),
+                b':' => {
+                    if self.peek() == b':' {
+                        self.mark();
+                        self.forward();
+                        tokens.push(TiToken::new(OField, self.range()))
+                    } else {
+                        tokens.push(TiToken::new(Colon, self.here()))
+                    }
+                }
                 b',' => tokens.push(TiToken::new(Comma, self.here())),
                 b';' => tokens.push(TiToken::new(Semi, self.here())),
                 b'.' => tokens.push(TiToken::new(OMember, self.here())),
@@ -187,8 +199,11 @@ impl<'a> TiLexer<'a> {
                         tokens.push(TiToken::new(OAssign, self.here()));
                     }
                 }
-                b'\r' | b'\n' => {
+                b'\r' => {
                     self.forward();
+                    self.line += 1;
+                }
+                b'\n' => {
                     self.line += 1;
                 }
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => {
@@ -213,6 +228,7 @@ impl<'a> TiLexer<'a> {
                         "break" => KBreak,
                         "type" => KType,
                         "fn" => KFn,
+                        "impl" => KImpl,
                         "nil" => LlNil,
                         _ => Ident(Rc::new(t_str.to_string())),
                     };
@@ -240,6 +256,51 @@ impl<'a> TiLexer<'a> {
                                 )),
                             },
                             self.range(),
+                            self.ti_source,
+                        ));
+                    }
+                }
+                b'\'' | b'"' => {
+                    self.mark();
+                    let mut cast = false;
+                    let mut raw_str = Vec::new();
+                    while !self.is_eof() {
+                        if cast {
+                            cast = false;
+                            match self.next() {
+                                b'r' => raw_str.push(b'\r'),
+                                b'n' => raw_str.push(b'\n'),
+                                b't' => raw_str.push(b'\t'),
+                                b'u' => todo!(),
+                                _ => ti_reporter.report(TiError::new(
+                                    SyntaxError {
+                                        syntax_error: LexerError(format!(
+                                            "invaild special char `\\{}` while parsing a string literal",
+                                            self.last(),
+                                        )),
+                                    },
+                                    self.here(),
+                                    self.ti_source,
+                                )),
+                            }
+                        } else {
+                            match self.next() {
+                                b'\'' | b'"' => break,
+                                b'\\' => cast = true,
+                                _ => raw_str.push(self.last()),
+                            };
+                        }
+                    }
+                    if let Ok(t_str) = String::from_utf8(raw_str) {
+                        tokens.push(TiToken::new(LlStr(Rc::new(t_str)), self.range()));
+                    } else {
+                        ti_reporter.report(TiError::new(
+                            SyntaxError {
+                                syntax_error: LexerError(format!(
+                                    "invaild string literal (decoding by utf-8)"
+                                )),
+                            },
+                            self.here(),
                             self.ti_source,
                         ));
                     }
