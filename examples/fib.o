@@ -1,0 +1,18 @@
+const ti_println = console.log;
+(() => {
+  function __ti_Person(ti_name, ti_age) {
+    this.ti_name = ti_name;
+    this.ti_age = ti_age;
+  }
+  function ti_Person(ti_name /* : string*/, ti_age /* : number */) {
+    return new __ti_Person(ti_name, ti_age);
+  }
+  return function ti_some_complex_type(ti_t /* : { [string]: number }[]*/, ti_p0 /* : {
+    name: string,
+    age: number,
+  } */, ti_ps /* : {
+    name: string,
+    age: number,
+  }[] */) /* : unknown */ {
+  };
+})()

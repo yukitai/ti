@@ -56,6 +56,10 @@ pub enum TiTokenType {
     OMember, // .
     OField,  // ::
 
+    TNum,
+    TStr,
+    TBool,
+
     Eof,
 }
 

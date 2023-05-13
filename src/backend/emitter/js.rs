@@ -1,7 +1,8 @@
 use std::rc::Rc;
 
-use crate::frontend::parser::ast::{
-    ImplFnType, TiExpr, TiExprType as E, TiProg, TiStmt, TiStmtType,
+use crate::{
+    frontend::parser::ast::{ImplFnType, TiExpr, TiExprType as E, TiProg, TiStmt, TiStmtType},
+    types::types::TiType,
 };
 
 use super::{emitter::TiEmit, stream::Stream};
@@ -116,19 +117,27 @@ impl JSEmitter {
                 }
             },
 
-            E::Fn(fname, fargs, _fret_d, fbody) => {
+            E::Fn(fname, fargs, fret_d, fbody) => {
                 stream.write("function ti_");
                 stream.write(fname);
                 stream.write("(");
                 if fargs.len() > 0 {
                     stream.write("ti_");
                     stream.write(&fargs[0].0);
-                    for (an, _) in &fargs[1..] {
+                    stream.write(" /* : ");
+                    self.emit_type(&fargs[0].1, stream);
+                    stream.write("*/");
+                    for (an, at) in &fargs[1..] {
                         stream.write(", ti_");
                         stream.write(an);
+                        stream.write(" /* : ");
+                        self.emit_type(at, stream);
+                        stream.write(" */");
                     }
                 }
-                stream.write(") {\r\n");
+                stream.write(") /* : ");
+                self.emit_type(fret_d, stream);
+                stream.write(" */ {\r\n");
                 self.emit_block_internal(fbody, stream, true);
                 self.emit_ident(stream);
                 stream.write("}");
@@ -182,19 +191,27 @@ impl JSEmitter {
     }
 
     fn emit_fn(&mut self, func: &ImplFnType, stream: &mut Stream) {
-        let (fname, fargs, _fret_d, fbody) = func;
+        let (fname, fargs, fret_d, fbody) = func;
         stream.write("function ti_");
         stream.write(fname);
         stream.write("(");
         if fargs.len() > 0 {
             stream.write("ti_");
             stream.write(&fargs[0].0);
-            for (an, _) in &fargs[1..] {
+            stream.write(" /* : ");
+            self.emit_type(&fargs[0].1, stream);
+            stream.write("*/");
+            for (an, at) in &fargs[1..] {
                 stream.write(", ti_");
                 stream.write(an);
+                stream.write(" /* : ");
+                self.emit_type(at, stream);
+                stream.write(" */");
             }
         }
-        stream.write(") {\r\n");
+        stream.write(") /* : ");
+        self.emit_type(fret_d, stream);
+        stream.write(" */ {\r\n");
         self.emit_block_internal(fbody, stream, true);
         self.emit_ident(stream);
         stream.write("}");
@@ -266,9 +283,15 @@ impl JSEmitter {
                 if fields.len() > 0 {
                     stream.write("ti_");
                     stream.write(&fields[0].0);
-                    for (field, _) in fields[1..].iter() {
+                    stream.write(" /* : ");
+                    self.emit_type(&fields[0].1, stream);
+                    stream.write("*/");
+                    for (field, at) in fields[1..].iter() {
                         stream.write(", ti_");
                         stream.write(field);
+                        stream.write(" /* : ");
+                        self.emit_type(at, stream);
+                        stream.write(" */");
                     }
                 }
                 stream.write(") {\r\n");
@@ -325,6 +348,42 @@ impl JSEmitter {
         self.emit_block_internal(block, stream, true);
         self.emit_ident(stream);
         stream.write("})()");
+    }
+
+    fn emit_type(&mut self, ti_type: &TiType, stream: &mut Stream) {
+        match ti_type {
+            TiType::Num => stream.write("number"),
+            TiType::Str => stream.write("string"),
+            TiType::Bool => stream.write("boolean"),
+            TiType::Map(k, v) => {
+                stream.write("{ [");
+                self.emit_type(k, stream);
+                stream.write("]: ");
+                self.emit_type(v, stream);
+                stream.write(" }");
+            }
+            TiType::List(t) => {
+                self.emit_type(t, stream);
+                stream.write("[]");
+            }
+            TiType::Mixed(tl) => {
+                stream.write("{\r\n");
+                self.begin();
+                for (tn, tt) in tl.iter() {
+                    self.emit_ident(stream);
+                    stream.write(tn);
+                    stream.write(": ");
+                    self.emit_type(tt, stream);
+                    stream.write(",\r\n");
+                }
+                self.close();
+                self.emit_ident(stream);
+                stream.write("}");
+            }
+            TiType::TVar(_sym, _) => {
+                stream.write("unknown");
+            }
+        }
     }
 }
 

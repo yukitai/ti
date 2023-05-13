@@ -1,4 +1,4 @@
-use crate::error::error::TiWhere;
+use crate::{error::error::TiWhere, types::types::TiType};
 
 use std::rc::Rc;
 
@@ -71,7 +71,7 @@ impl TiExpr {
     }
 }
 
-type TiDescri = Rc<String>;
+type TiDescri = Rc<TiType>;
 
 #[derive(Debug)]
 pub enum TiExprType {

@@ -230,6 +230,9 @@ impl<'a> TiLexer<'a> {
                         "fn" => KFn,
                         "impl" => KImpl,
                         "nil" => LlNil,
+                        "num" => TNum,
+                        "str" => TStr,
+                        "bool" => TBool,
                         _ => Ident(Rc::new(t_str.to_string())),
                     };
                     tokens.push(TiToken::new(token, self.range()));
@@ -260,7 +263,7 @@ impl<'a> TiLexer<'a> {
                         ));
                     }
                 }
-                b'\'' | b'"' => {
+                b'"' => {
                     self.mark();
                     let mut cast = false;
                     let mut raw_str = Vec::new();
@@ -285,7 +288,7 @@ impl<'a> TiLexer<'a> {
                             }
                         } else {
                             match self.next() {
-                                b'\'' | b'"' => break,
+                                b'"' => break,
                                 b'\\' => cast = true,
                                 _ => raw_str.push(self.last()),
                             };

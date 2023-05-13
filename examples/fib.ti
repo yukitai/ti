@@ -1,11 +1,5 @@
+type Person(name: str, age: num)
+
+fn some_complex_type(t: [{str; num}], p0: Person, ps: [Person]) {}
 
 
-type Map()
-
-let m = Map()
-
-m["xy"] = 123
-
-m["yx"] = 321
-
-println(m);

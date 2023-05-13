@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{collections::HashMap, rc::Rc};
 
 use crate::{
     error::{
@@ -6,11 +6,13 @@ use crate::{
         reporter::TiReporter,
     },
     frontend::lexer::token::{TiToken, TiTokenStream, TiTokenType::*},
+    types::types::TiType,
 };
 
 use super::ast::{TiExprType as E, *};
 
 pub struct TiParser<'a> {
+    pub types: HashMap<Rc<String>, Rc<Vec<(Rc<String>, Rc<TiType>)>>>,
     ti_tokens: TiTokenStream,
     ti_source: &'a str,
     pub ti_ast: TiProg,
@@ -19,6 +21,7 @@ pub struct TiParser<'a> {
 impl<'a> TiParser<'a> {
     pub fn new(ti_tokens: TiTokenStream, ti_filename: &str, ti_source: &'a str) -> Self {
         Self {
+            types: HashMap::new(),
             ti_tokens,
             ti_source,
             ti_ast: TiProg::new(ti_filename.to_string()),
@@ -173,11 +176,15 @@ impl<'a> TiParser<'a> {
                         }
                         if let Some(aname) = self.ti_tokens.assert_next_ident() {
                             let ad = if self.ti_tokens.assert_next(Colon) {
-                                todo!()
+                                if let Some(t) = self.parse_type(ti_reporter) {
+                                    t
+                                } else {
+                                    return None
+                                }
                             } else {
-                                Rc::new(String::new())
+                                TiType::tvar()
                             };
-                            fields.push((aname, ad));
+                            fields.push((aname, Rc::new(ad)));
                         } else {
                             ti_reporter.report(TiError::new(
                                 TiErrorType::SyntaxError {
@@ -208,6 +215,7 @@ impl<'a> TiParser<'a> {
                         }
                     }
                 }
+                self.types.insert(vtn.clone(), Rc::new(fields.clone()));
                 Some(TiStmt::new(self.ti_tokens.range(), TiStmtType::TypeDecl(vtn, fields)))
             } else {
                 ti_reporter.report(TiError::new(
@@ -790,11 +798,15 @@ impl<'a> TiParser<'a> {
                         }
                         if let Some(aname) = self.ti_tokens.assert_next_ident() {
                             let ad = if self.ti_tokens.assert_next(Colon) {
-                                todo!()
+                                if let Some(t) = self.parse_type(ti_reporter) {
+                                    t
+                                } else {
+                                    return None
+                                }
                             } else {
-                                Rc::new(String::new())
+                                TiType::tvar()
                             };
-                            fargs.push((aname, ad));
+                            fargs.push((aname, Rc::new(ad)));
                         } else {
                             ti_reporter.report(TiError::new(
                                 TiErrorType::SyntaxError {
@@ -824,11 +836,15 @@ impl<'a> TiParser<'a> {
                             ));
                             }
                     }}
-                    let fretd = if self.ti_tokens.assert_next(ThinArrow) {
-                        todo!()
+                    let fretd = Rc::new(if self.ti_tokens.assert_next(ThinArrow) {
+                        if let Some(t) = self.parse_type(ti_reporter) {
+                                    t
+                                } else {
+                                    return None
+                                }
                     } else {
-                        Rc::new(String::new())
-                    };
+                        TiType::tvar()
+                    });
                     let fbody = if self.ti_tokens.assert_next(FatArrow) {
                         if let Some(vexpr) = self.parse_expr(ti_reporter) {
                             vec![TiStmt::new(vexpr.ti_where, TiStmtType::Expr(vexpr))]
@@ -846,5 +862,75 @@ impl<'a> TiParser<'a> {
                 });
         self.ti_tokens.unmark();
         result
+    }
+
+    fn parse_type(&mut self, ti_reporter: &mut TiReporter<'a>) -> Option<TiType> {
+        self.parse_type_primary(ti_reporter)
+    }
+
+    fn parse_type_primary(&mut self, ti_reporter: &mut TiReporter<'a>) -> Option<TiType> {
+        let curr = self.ti_tokens.next();
+        match &curr.ti_token_type {
+            TNum => Some(TiType::Num),
+            TStr => Some(TiType::Str),
+            TBool => Some(TiType::Bool),
+            Ident(tname) => {
+                if !self.types.contains_key(tname) {
+                    ti_reporter.report(TiError::new(
+                        TiErrorType::SyntaxError {
+                            syntax_error: TiSyntaxError::ParserError(format!(
+                                "name `{:?}` is not a type or a trait",
+                                tname
+                            )),
+                        },
+                        curr.ti_where,
+                        self.ti_source,
+                    ));
+                    return None;
+                }
+                Some(TiType::Mixed(self.types.get(tname).unwrap().clone()))
+            }
+            LBrace => None,
+            LBracket => {
+                let t = self.parse_type(ti_reporter);
+                t.and_then(|vt| {
+                    if self.ti_tokens.assert_next(RBracket) {
+                        Some(TiType::List(Box::new(vt)))
+                    } else {
+                        None
+                    }
+                })
+            }
+            LBra => {
+                let kt = self.parse_type(ti_reporter);
+                kt.and_then(|vkt| {
+                    if self.ti_tokens.assert_next(Semi) {
+                        let vt = self.parse_type(ti_reporter);
+                        vt.and_then(|vvt| {
+                            if self.ti_tokens.assert_next(RBra) {
+                                Some(TiType::Map(Box::new(vkt), Box::new(vvt)))
+                            } else {
+                                None
+                            }
+                        })
+                    } else {
+                        None
+                    }
+                })
+            }
+            _ => {
+                ti_reporter.report(TiError::new(
+                    TiErrorType::SyntaxError {
+                        syntax_error: TiSyntaxError::ParserError(format!(
+                            "unexpected token {:?} while parsing a type",
+                            curr.ti_token_type
+                        )),
+                    },
+                    curr.ti_where,
+                    self.ti_source,
+                ));
+                None
+            }
+        }
     }
 }
